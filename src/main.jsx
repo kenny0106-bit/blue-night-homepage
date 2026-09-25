@@ -67,7 +67,7 @@ function PosterRecognitionLayer() {
 }
 
 function IllustratedPosterScan() {
-  return <svg className="poster-scan-illustration" viewBox="0 0 500 500" role="img" aria-label="Illustration of a hand holding a phone and scanning a Blue Night poster">
+  return <svg className="poster-scan-illustration" viewBox="0 0 500 500" role="img" aria-label="Illustration of a smartphone and Blue Night poster with a subtle scan effect">
     <defs>
       <linearGradient id="poster-scan-beam" x1="0" x2="0" y1="0" y2="1">
         <stop offset="0" stopColor="#e5bd3c" stopOpacity="0" />
@@ -122,13 +122,6 @@ function IllustratedPosterScan() {
           <path d="M335 294h43m-43 5h27" stroke="#aaa798" strokeOpacity=".65" />
         </g>
         <path d="M337 321h48" stroke="#f1efdf" strokeOpacity=".22" />
-      </g>
-
-      <g className="scan-hand" stroke="#101113" strokeWidth="2" strokeLinejoin="round">
-        <path d="M391 500c-5-21-16-52-29-76-8-15-15-29-12-36 3-8 12-8 18 0l17 24-16-37c-4-9 4-16 12-10l25 31-14-28c-5-10 4-17 13-10l28 32-8-17c-4-9 4-16 12-10 17 16 33 34 38 55 6 26 0 56-10 82z" fill="#b85e3d" />
-        <path d="M367 385c8 7 16 17 22 27m7-31c9 8 17 19 23 29m3-31c8 8 14 16 20 25" fill="none" stroke="#f0b18a" strokeOpacity=".8" strokeWidth="2" />
-        <path d="M375 415c-8-3-18-9-24-16-5-5-10 1-6 8l21 27" fill="#d68a62" />
-        <path d="M391 500c-5-21-16-52-29-76-8-15-15-29-12-36" fill="none" stroke="#f0b18a" strokeOpacity=".65" />
       </g>
     </g>
   </svg>
@@ -214,7 +207,6 @@ function ArPosterPage() {
       <div className="ar-art" aria-hidden="true">
         <IllustratedPosterScan />
         <span className="ar-art-label">IMAGE / 01</span>
-        <span className="ar-art-coordinate">22°37′N<br />120°18′E</span>
       </div>
       <div className="ar-copy">
         <p className="ar-kicker"><i /> BLUE NIGHT / EXTENDED SPACE</p>
