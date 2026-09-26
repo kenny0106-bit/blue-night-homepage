@@ -8,8 +8,8 @@ const IDLE_TIMEOUT_MS = 15_000
 // Connect future destinations by replacing the empty href values.
 const entrances = [
   { id: '01', name: 'AR POSTER', detail: 'SCAN', href: '/ar-poster', state: 'SCANNER PREVIEW' },
-  { id: '02', name: 'NFC', detail: 'TAP IN', href: 'https://blue-night-one.vercel.app/', state: 'AVAILABLE' },
-  { id: '03', name: 'TICKETS', detail: 'ENTRY', href: '', state: 'COMING SOON' },
+  { id: '02', name: 'THE SOUND', detail: 'TAP IN', href: 'https://blue-night-one.vercel.app/', state: 'AVAILABLE' },
+  { id: '03', name: 'THE SOUND', detail: 'ENTRY', href: '', state: 'COMING SOON' },
 ]
 
 function BrandMark() {
