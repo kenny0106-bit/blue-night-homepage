@@ -9,7 +9,7 @@ const IDLE_TIMEOUT_MS = 15_000
 const entrances = [
   { id: '01', name: 'AR POSTER', detail: 'SCAN', href: '/ar-poster', state: 'SCANNER PREVIEW' },
   { id: '02', name: 'THE SOUND', detail: 'TAP IN', href: 'https://blue-night-one.vercel.app/', state: 'AVAILABLE' },
-  { id: '03', name: 'THE SOUND', detail: 'ENTRY', href: '', state: 'COMING SOON' },
+  { id: '03', name: 'TICKET', detail: 'ENTRY', href: '', state: 'COMING SOON' },
 ]
 
 function BrandMark() {
@@ -212,7 +212,7 @@ function ArPosterPage() {
         <p className="ar-kicker"><i /> BLUE NIGHT / EXTENDED SPACE</p>
         <h1 id="ar-title">AR<br /><em>POSTER</em></h1>
         <p className="ar-lead">BRING THE POSTERS<br />TO LIFE.</p>
-        <p className="ar-description">Point your camera at a<br className="desktop-break" /> Blue Night poster.</p>
+        <p className="ar-description">對準海報，讓音樂甦醒</p>
         {scannerState === 'requesting'
           ? <button className="start-scan" disabled><span>OPENING CAMERA</span><i>···</i></button>
           : <button className="start-scan" onClick={startScanning}><span>START SCANNING</span><i>↗</i></button>}
@@ -229,7 +229,7 @@ function App() {
   const [phase, setPhase] = useState(() => {
     const returningFromAr = window.sessionStorage.getItem('blue-night-return-to-portal') === '1'
     window.sessionStorage.removeItem('blue-night-return-to-portal')
-    return returningFromAr ? 'portal' : 'opening'
+    return returningFromAr || window.location.hash === '#portal' ? 'portal' : 'opening'
   })
   const [promptVisible, setPromptVisible] = useState(false)
   const [standby, setStandby] = useState(false)
@@ -345,8 +345,8 @@ function App() {
   }
   leaveStandbyRef.current = leaveStandby
 
-  return <div className={`experience ${phase === 'portal' ? 'is-portal' : 'is-opening'}`}>
-    <PortalHome inactive={phase !== 'portal'} onManualStandby={enterStandbyManually} />
+  return <div className={`experience ${phase === 'portal' ? 'is-portal' : 'is-opening'}${standby ? ' is-standby' : ''}`}>
+    <PortalHome inactive={phase !== 'portal' || standby} onManualStandby={enterStandbyManually} />
     {phase !== 'portal' && <button
       className={`opening-screen ${phase === 'transitioning' ? 'is-leaving' : ''}`}
       type="button"
