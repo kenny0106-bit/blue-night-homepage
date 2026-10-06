@@ -33,9 +33,9 @@ The portal enters standby after 15 seconds without input anywhere in the page. T
 
 ## AR camera preview
 
-The AR intro requests the rear-facing camera only after **START SCANNING** is pressed. The camera screen is a preview only: `PosterRecognitionLayer` is the future integration point and currently performs no image tracking or detection.
+The `/ar-poster` intro requests the rear-facing camera only after **START SCANNING** is pressed. MindAR image tracking recognizes the Guitar poster using the compiled target at `public/ar/guitar.mind`; its video is `public/ar/guitar.mp4`. The original poster target image is `public/ar/guitar.jpg` and is preserved unchanged. The video plane is attached to target 0 and is stopped/hidden when tracking is lost.
 
-Camera access requires HTTPS in deployed environments (localhost is permitted for local development). No environment variables are currently required; do not add secrets to the repository.
+Camera access requires HTTPS in deployed environments (`localhost` is permitted for local development). To add another poster later, compile its image into a MindAR target file, add that target and matching video under `public/ar/`, then add a target/video mapping in `PosterRecognitionLayer` in `src/main.jsx`. No environment variables are required.
 
 ## GitHub and Vercel
 

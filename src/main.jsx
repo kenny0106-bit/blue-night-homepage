@@ -61,9 +61,137 @@ function PortalHome({ inactive, onManualStandby }) {
   </main>
 }
 
-function PosterRecognitionLayer() {
-  // Future hook: connect poster image tracking here. No frames are analysed yet.
-  return <div className="recognition-layer" aria-hidden="true" data-recognition="not-connected" />
+function PosterRecognitionLayer({ active, onReady, onTargetChange, onError }) {
+  const containerRef = useRef(null)
+  const trackerRef = useRef(null)
+  const callbacksRef = useRef({ onReady, onTargetChange, onError })
+  callbacksRef.current = { onReady, onTargetChange, onError }
+
+  useEffect(() => {
+    if (!active) return undefined
+    let cancelled = false
+
+    const startTracking = async () => {
+      try {
+        if (!trackerRef.current) {
+          const [{ MindARThree }, THREE] = await Promise.all([
+            import('mind-ar/dist/mindar-image-three.prod.js'),
+            import('three'),
+          ])
+          if (cancelled || !containerRef.current) return
+
+          const mindar = new MindARThree({
+            container: containerRef.current,
+            imageTargetSrc: '/ar/guitar.mind',
+            maxTrack: 1,
+            uiLoading: 'no',
+            uiScanning: 'no',
+            uiError: 'no',
+          })
+          const targetVideo = document.createElement('video')
+          targetVideo.src = '/ar/guitar.mp4'
+          targetVideo.preload = 'auto'
+          targetVideo.playsInline = true
+          targetVideo.loop = false
+          targetVideo.muted = false
+          targetVideo.setAttribute('playsinline', '')
+          targetVideo.load()
+
+          const videoTexture = new THREE.VideoTexture(targetVideo)
+          videoTexture.colorSpace = THREE.SRGBColorSpace
+          const videoMaterial = new THREE.MeshBasicMaterial({
+            map: videoTexture,
+            side: THREE.DoubleSide,
+            toneMapped: false,
+          })
+          // The target is 2480 × 3508 and the supplied video is 1080 × 1526;
+          // this plane therefore covers the printed poster with almost no aspect mismatch.
+          const videoPlane = new THREE.Mesh(
+            new THREE.PlaneGeometry(1, 3508 / 2480),
+            videoMaterial,
+          )
+          videoPlane.position.z = 0.01
+
+          const guitarAnchor = mindar.addAnchor(0)
+          guitarAnchor.group.add(videoPlane)
+          guitarAnchor.onTargetFound = () => {
+            videoPlane.visible = true
+            targetVideo.currentTime = 0
+            callbacksRef.current.onTargetChange(true)
+            targetVideo.play().catch(() => {
+              // Keep the AR video moving on browsers that block audio autoplay.
+              targetVideo.muted = true
+              targetVideo.play().catch(() => {})
+            })
+          }
+          guitarAnchor.onTargetLost = () => {
+            videoPlane.visible = false
+            targetVideo.pause()
+            targetVideo.currentTime = 0
+            callbacksRef.current.onTargetChange(false)
+          }
+
+          trackerRef.current = { mindar, targetVideo, videoTexture, videoMaterial, videoPlane }
+        }
+
+        const { mindar } = trackerRef.current
+        await mindar.start()
+        if (cancelled) {
+          stopMindARCamera(mindar)
+          return
+        }
+        mindar.renderer.setAnimationLoop(() => mindar.renderer.render(mindar.scene, mindar.camera))
+        callbacksRef.current.onReady()
+      } catch (error) {
+        if (!cancelled) {
+          const messages = {
+            NotAllowedError: 'Camera access was not granted. Allow camera access in your browser settings, then try again.',
+            NotFoundError: 'No camera was found on this device.',
+            NotReadableError: 'The camera is busy in another app. Close it there and try again.',
+          }
+          callbacksRef.current.onError(messages[error?.name] || 'The camera or poster tracker could not start. Check permissions and try again.')
+        }
+      }
+    }
+
+    startTracking()
+    return () => {
+      cancelled = true
+      const tracker = trackerRef.current
+      if (tracker) {
+        tracker.targetVideo.pause()
+        tracker.targetVideo.currentTime = 0
+        tracker.mindar.renderer.setAnimationLoop(null)
+        stopMindARCamera(tracker.mindar)
+        callbacksRef.current.onTargetChange(false)
+      }
+    }
+  }, [active])
+
+  useEffect(() => () => {
+    const tracker = trackerRef.current
+    if (!tracker) return
+    tracker.targetVideo.pause()
+    tracker.targetVideo.removeAttribute('src')
+    tracker.targetVideo.load()
+    tracker.videoTexture.dispose()
+    tracker.videoMaterial.dispose()
+    tracker.videoPlane.geometry.dispose()
+    tracker.mindar.renderer.dispose()
+    tracker.mindar.cssRenderer.domElement.remove()
+    tracker.mindar.renderer.domElement.remove()
+    stopMindARCamera(tracker.mindar)
+  }, [])
+
+  return <div ref={containerRef} className="recognition-layer" aria-hidden="true" data-recognition="guitar-image-target" />
+}
+
+function stopMindARCamera(mindar) {
+  mindar?.renderer?.setAnimationLoop(null)
+  if (mindar?.controller && mindar.video?.srcObject) {
+    mindar.stop()
+    mindar.video.srcObject = null
+  }
 }
 
 function IllustratedPosterScan() {
@@ -128,19 +256,11 @@ function IllustratedPosterScan() {
 }
 
 function ArPosterPage() {
-  const videoRef = useRef(null)
   const [scannerState, setScannerState] = useState('intro')
-  const [stream, setStream] = useState(null)
   const [cameraMessage, setCameraMessage] = useState('')
+  const [targetDetected, setTargetDetected] = useState(false)
 
-  React.useEffect(() => {
-    if (!stream || !videoRef.current) return
-    videoRef.current.srcObject = stream
-    videoRef.current.play().catch(() => {})
-    return () => stream.getTracks().forEach(track => track.stop())
-  }, [stream])
-
-  const startScanning = async () => {
+  const startScanning = () => {
     if (scannerState === 'requesting') return
     setCameraMessage('')
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -149,37 +269,23 @@ function ArPosterPage() {
       return
     }
     setScannerState('requesting')
-    try {
-      const nextStream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-      })
-      setStream(nextStream)
-      setScannerState('camera')
-    } catch (error) {
-      const messages = {
-        NotAllowedError: 'Camera access was not granted. Allow camera access in your browser settings, then try again.',
-        NotFoundError: 'No camera was found on this device.',
-        NotReadableError: 'The camera is busy in another app. Close it there and try again.',
-      }
-      setCameraMessage(messages[error?.name] || 'The camera could not be opened. Check its permissions and try again.')
-      setScannerState('error')
-    }
   }
 
   const stopScanning = () => {
-    stream?.getTracks().forEach(track => track.stop())
-    setStream(null)
+    setTargetDetected(false)
     setScannerState('intro')
   }
 
-  if (scannerState === 'camera' && stream) return <main className="camera-screen">
-    <video ref={videoRef} className="camera-feed" autoPlay muted playsInline aria-label="Live rear camera view" />
-    <PosterRecognitionLayer />
+  const isTracking = scannerState === 'requesting' || scannerState === 'camera'
+
+  return <>
+  {isTracking && <main className="camera-screen">
+    <PosterRecognitionLayer
+      active={isTracking}
+      onReady={() => setScannerState('camera')}
+      onTargetChange={setTargetDetected}
+      onError={message => { setCameraMessage(message); setScannerState('error') }}
+    />
     <header className="camera-topline">
       <a className="camera-exit" href="/ar-poster" onClick={event => { event.preventDefault(); stopScanning() }}>← BACK</a>
       <span>AR POSTER <i>·</i> LIVE CAMERA</span>
@@ -193,11 +299,11 @@ function ArPosterPage() {
       <span className="scan-center"><i /></span>
     </div>
     <footer className="camera-bottomline">
-      <span>CAMERA READY</span><i /><span>POSTER TRACKING NOT CONNECTED</span>
+      <span>{targetDetected ? 'GUITAR / TRACKED' : 'SCANNING / GUITAR'}</span><i /><span>{targetDetected ? 'AR VIDEO / PLAYING' : 'IMAGE TARGET / 01'}</span>
     </footer>
-  </main>
+  </main>}
 
-  return <main className="ar-page">
+  {scannerState !== 'requesting' && scannerState !== 'camera' && <main className="ar-page">
     <header className="ar-header">
       <a className="ar-return" href="/" onClick={() => window.sessionStorage.setItem('blue-night-return-to-portal', '1')}>← BLUE NIGHT</a>
       <span className="ar-edition">AR POSTER <i>·</i> CAMERA STUDY</span>
@@ -221,7 +327,8 @@ function ArPosterPage() {
       </div>
     </section>
     <footer className="ar-footer"><span>BLUE NIGHT / KAOHSIUNG</span><span>POSTER SCANNER — PREVIEW</span></footer>
-  </main>
+  </main>}
+  </>
 }
 
 function App() {
