@@ -31,11 +31,13 @@ The opening and website standby use `public/blue-night-standby.mp4`. The video i
 
 The portal enters standby after 15 seconds without input anywhere in the page. The global activity listeners cover pointer/mouse, touch, scroll/wheel, keyboard, text input, and clicks. The small **STANDBY** masthead control enters the same standby state immediately. Change `IDLE_TIMEOUT_MS` near the top of `src/main.jsx` to adjust the delay.
 
-## AR camera preview
+## AR poster tracking
 
-The `/ar-poster` intro requests the rear-facing camera only after **START SCANNING** is pressed. MindAR image tracking recognizes the Guitar poster using the compiled target at `public/ar/guitar.mind`; its video is `public/ar/guitar.mp4`. The original poster target image is `public/ar/guitar.jpg` and is preserved unchanged. The video plane is attached to target 0 and is stopped/hidden when tracking is lost.
+The `/ar-poster` intro requests the rear-facing camera only after **START SCANNING** is pressed. MindAR tracks up to three independent image targets from `public/ar/blue-night-posters.mind`, in this order: Guitar, Microphone, French Horn. Their original poster images are kept in `public/ar/poster-targets/`; their videos are in `public/ar/poster-videos/`.
 
-Camera access requires HTTPS in deployed environments (`localhost` is permitted for local development). To add another poster later, compile its image into a MindAR target file, add that target and matching video under `public/ar/`, then add a target/video mapping in `PosterRecognitionLayer` in `src/main.jsx`. No environment variables are required.
+Each tracked poster has its own Three.js video plane. One or two tracked posters play their videos with embedded audio. When all three are tracked, all three continue playing while their videos are muted; losing a target stops only that target and restores audio for any remaining one or two. The target order in `posterTargets` in `src/main.jsx` must match the compiled `.mind` target order.
+
+Camera access requires HTTPS in deployed environments (`localhost` is permitted for local development). To replace a poster, place the new image and video in the corresponding folders and recompile `blue-night-posters.mind` with the same target order. No environment variables are required.
 
 ## GitHub and Vercel
 

@@ -1,5 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { updatePosterAudioMode } from './poster-audio-mode.js'
+import { updatePosterLoopMode } from './poster-video-mode.js'
+import { hasCoincidentPosterPose } from './poster-pose.js'
+import { hasAllSecretTrackPosters, shouldUnlockSecretTrack } from './secret-track-logic.js'
 import './styles.css'
 
 // Adjust this one value to change the homepage idle delay.
@@ -61,11 +65,18 @@ function PortalHome({ inactive, onManualStandby }) {
   </main>
 }
 
-function PosterRecognitionLayer({ active, onReady, onTargetChange, onError }) {
+// targetIndex follows the image order used to compile public/ar/blue-night-posters.mind.
+const posterTargets = [
+  { id: 'guitar', label: 'GUITAR', targetIndex: 0, videoSrc: '/ar/poster-videos/guitar.mp4', aspectRatio: 2187 / 1554 },
+  { id: 'microphone', label: 'MICROPHONE', targetIndex: 1, videoSrc: '/ar/poster-videos/microphone.mp4', aspectRatio: 1987 / 1407 },
+  { id: 'french-horn', label: 'FRENCH HORN', targetIndex: 2, videoSrc: '/ar/poster-videos/french-horn.mp4', aspectRatio: 1999 / 1413 },
+]
+
+function PosterRecognitionLayer({ active, onReady, onTargetsChange, onError, trackedPosterIds, forceVideoMute }) {
   const containerRef = useRef(null)
   const trackerRef = useRef(null)
-  const callbacksRef = useRef({ onReady, onTargetChange, onError })
-  callbacksRef.current = { onReady, onTargetChange, onError }
+  const callbacksRef = useRef({ onReady, onTargetsChange, onError, forceVideoMute })
+  callbacksRef.current = { onReady, onTargetsChange, onError, forceVideoMute }
 
   useEffect(() => {
     if (!active) return undefined
@@ -82,56 +93,110 @@ function PosterRecognitionLayer({ active, onReady, onTargetChange, onError }) {
 
           const mindar = new MindARThree({
             container: containerRef.current,
-            imageTargetSrc: '/ar/guitar.mind',
-            maxTrack: 1,
+            imageTargetSrc: '/ar/blue-night-posters.mind',
+            maxTrack: posterTargets.length,
             uiLoading: 'no',
             uiScanning: 'no',
             uiError: 'no',
           })
-          const targetVideo = document.createElement('video')
-          targetVideo.src = '/ar/guitar.mp4'
-          targetVideo.preload = 'auto'
-          targetVideo.playsInline = true
-          targetVideo.loop = false
-          targetVideo.muted = false
-          targetVideo.setAttribute('playsinline', '')
-          targetVideo.load()
+          const trackedPosterIds = new Set()
+          const duplicateTargetIds = new Set()
+          const publishTrackedTargets = () => {
+            callbacksRef.current.onTargetsChange(
+              posterTargets.filter(poster => trackedPosterIds.has(poster.id)).map(poster => poster.id),
+            )
+          }
+          const posters = posterTargets.map(poster => {
+            const targetVideo = document.createElement('video')
+            targetVideo.src = poster.videoSrc
+            targetVideo.preload = 'auto'
+            targetVideo.playsInline = true
+            targetVideo.loop = false
+            targetVideo.muted = true
+            targetVideo.setAttribute('playsinline', '')
+            targetVideo.load()
 
-          const videoTexture = new THREE.VideoTexture(targetVideo)
-          videoTexture.colorSpace = THREE.SRGBColorSpace
-          const videoMaterial = new THREE.MeshBasicMaterial({
-            map: videoTexture,
-            side: THREE.DoubleSide,
-            toneMapped: false,
-          })
-          // The target is 2480 × 3508 and the supplied video is 1080 × 1526;
-          // this plane therefore covers the printed poster with almost no aspect mismatch.
-          const videoPlane = new THREE.Mesh(
-            new THREE.PlaneGeometry(1, 3508 / 2480),
-            videoMaterial,
-          )
-          videoPlane.position.z = 0.01
-
-          const guitarAnchor = mindar.addAnchor(0)
-          guitarAnchor.group.add(videoPlane)
-          guitarAnchor.onTargetFound = () => {
-            videoPlane.visible = true
-            targetVideo.currentTime = 0
-            callbacksRef.current.onTargetChange(true)
-            targetVideo.play().catch(() => {
-              // Keep the AR video moving on browsers that block audio autoplay.
-              targetVideo.muted = true
-              targetVideo.play().catch(() => {})
+            const videoTexture = new THREE.VideoTexture(targetVideo)
+            videoTexture.colorSpace = THREE.SRGBColorSpace
+            const videoMaterial = new THREE.MeshBasicMaterial({
+              map: videoTexture,
+              side: THREE.DoubleSide,
+              toneMapped: false,
             })
-          }
-          guitarAnchor.onTargetLost = () => {
+            const videoPlane = new THREE.Mesh(
+              new THREE.PlaneGeometry(1, poster.aspectRatio),
+              videoMaterial,
+            )
             videoPlane.visible = false
-            targetVideo.pause()
-            targetVideo.currentTime = 0
-            callbacksRef.current.onTargetChange(false)
-          }
+            videoPlane.position.z = 0.01
 
-          trackerRef.current = { mindar, targetVideo, videoTexture, videoMaterial, videoPlane }
+            const anchor = mindar.addAnchor(poster.targetIndex)
+            anchor.group.add(videoPlane)
+            anchor.onTargetFound = () => {
+              const eventDetails = getTargetEventDetails(mindar, poster, anchor, [...trackedPosterIds])
+              if (trackedPosterIds.has(poster.id)) {
+                console.warn('[Blue Night AR] Ignored duplicate targetFound event.', eventDetails)
+                return
+              }
+              if (duplicateTargetIds.has(poster.id)) {
+                console.warn('[Blue Night AR] Ignored repeated targetFound for a suppressed target.', eventDetails)
+                return
+              }
+
+              const overlappingPoster = posters.find(trackedPoster =>
+                trackedPoster.id !== poster.id
+                && trackedPosterIds.has(trackedPoster.id)
+                && hasCoincidentPosterPose(anchor, trackedPoster.anchor),
+              )
+              if (overlappingPoster) {
+                duplicateTargetIds.add(poster.id)
+                videoPlane.visible = false
+                targetVideo.pause()
+                targetVideo.currentTime = 0
+                console.warn('[Blue Night AR] Suppressed a coincident target pose.', {
+                  ...eventDetails,
+                  suppressedBy: { id: overlappingPoster.id, targetIndex: overlappingPoster.targetIndex },
+                  poseCollisionGuard: true,
+                })
+                return
+              }
+
+              duplicateTargetIds.delete(poster.id)
+              console.info('[Blue Night AR] Target found.', eventDetails)
+              trackedPosterIds.add(poster.id)
+              videoPlane.visible = true
+              updatePosterAudioMode(posters, trackedPosterIds, callbacksRef.current.forceVideoMute)
+              updatePosterLoopMode(posters, trackedPosterIds, poster.id)
+              publishTrackedTargets()
+              targetVideo.currentTime = 0
+              targetVideo.play().catch(error => {
+                // Never mute as a fallback: the audio mode is controlled only by tracked posters.
+                console.warn(`Could not autoplay ${poster.label} video with its original audio.`, error)
+              })
+            }
+            anchor.onTargetLost = () => {
+              videoPlane.visible = false
+              targetVideo.pause()
+              targetVideo.currentTime = 0
+              const eventDetails = getTargetEventDetails(mindar, poster, anchor, [...trackedPosterIds])
+              if (duplicateTargetIds.delete(poster.id)) {
+                console.info('[Blue Night AR] Suppressed target lost.', { ...eventDetails, suppressed: true })
+                return
+              }
+              if (!trackedPosterIds.delete(poster.id)) {
+                console.warn('[Blue Night AR] Ignored targetLost event for a target absent from tracked state.', eventDetails)
+                return
+              }
+              console.info('[Blue Night AR] Target lost.', eventDetails)
+              updatePosterAudioMode(posters, trackedPosterIds, callbacksRef.current.forceVideoMute)
+              updatePosterLoopMode(posters, trackedPosterIds)
+              publishTrackedTargets()
+            }
+
+            return { ...poster, anchor, targetVideo, videoTexture, videoMaterial, videoPlane }
+          })
+
+          trackerRef.current = { mindar, posters, trackedPosterIds }
         }
 
         const { mindar } = trackerRef.current
@@ -159,31 +224,76 @@ function PosterRecognitionLayer({ active, onReady, onTargetChange, onError }) {
       cancelled = true
       const tracker = trackerRef.current
       if (tracker) {
-        tracker.targetVideo.pause()
-        tracker.targetVideo.currentTime = 0
+        tracker.posters.forEach(poster => {
+          poster.targetVideo.pause()
+          poster.targetVideo.currentTime = 0
+        })
+        tracker.trackedPosterIds.clear()
+        callbacksRef.current.onTargetsChange([])
         tracker.mindar.renderer.setAnimationLoop(null)
         stopMindARCamera(tracker.mindar)
-        callbacksRef.current.onTargetChange(false)
       }
     }
   }, [active])
 
+  useEffect(() => {
+    const tracker = trackerRef.current
+    if (!active || !tracker) return
+    updatePosterAudioMode(tracker.posters, tracker.trackedPosterIds, forceVideoMute)
+  }, [active, forceVideoMute, trackedPosterIds])
+
   useEffect(() => () => {
     const tracker = trackerRef.current
     if (!tracker) return
-    tracker.targetVideo.pause()
-    tracker.targetVideo.removeAttribute('src')
-    tracker.targetVideo.load()
-    tracker.videoTexture.dispose()
-    tracker.videoMaterial.dispose()
-    tracker.videoPlane.geometry.dispose()
+    tracker.posters.forEach(poster => {
+      poster.targetVideo.pause()
+      poster.targetVideo.removeAttribute('src')
+      poster.targetVideo.load()
+      poster.videoTexture.dispose()
+      poster.videoMaterial.dispose()
+      poster.videoPlane.geometry.dispose()
+    })
     tracker.mindar.renderer.dispose()
     tracker.mindar.cssRenderer.domElement.remove()
     tracker.mindar.renderer.domElement.remove()
     stopMindARCamera(tracker.mindar)
   }, [])
 
-  return <div ref={containerRef} className="recognition-layer" aria-hidden="true" data-recognition="guitar-image-target" />
+  return <div ref={containerRef} className="recognition-layer" aria-hidden="true" data-recognition="three-blue-night-poster-targets" />
+}
+
+function getTargetEventDetails(mindar, poster, anchor, trackedPosterIds) {
+  const states = mindar.controller?.trackingStates ?? []
+  const state = states[poster.targetIndex]
+  const elements = anchor.group.matrix.elements
+  const poseIsVisible = Boolean(state?.showing)
+
+  return {
+    timestamp: new Date().toISOString(),
+    posterId: poster.id,
+    label: poster.label,
+    targetIndex: poster.targetIndex,
+    trackedPosterIds,
+    trackingState: state ? {
+      isTracking: state.isTracking,
+      showing: state.showing,
+      trackCount: state.trackCount,
+      trackMiss: state.trackMiss,
+    } : null,
+    mindarTracking: states.map((targetState, targetIndex) => ({
+      targetIndex,
+      isTracking: targetState.isTracking,
+      showing: targetState.showing,
+      trackCount: targetState.trackCount,
+      trackMiss: targetState.trackMiss,
+    })),
+    pose: poseIsVisible ? {
+      x: Number(elements[12].toFixed(4)),
+      y: Number(elements[13].toFixed(4)),
+      z: Number(elements[14].toFixed(4)),
+      targetScale: Number(Math.hypot(elements[0], elements[1], elements[2]).toFixed(4)),
+    } : null,
+  }
 }
 
 function stopMindARCamera(mindar) {
@@ -255,10 +365,249 @@ function IllustratedPosterScan() {
   </svg>
 }
 
+function SecretTrackExperience({ active, trackedPosterIds, onForcePosterMuteChange }) {
+  const [phase, setPhase] = useState('idle')
+  const [blackFlash, setBlackFlash] = useState(false)
+  const [songInfoVisible, setSongInfoVisible] = useState(false)
+  const [playback, setPlayback] = useState('idle')
+  const playbackRef = useRef(playback)
+  const audioRef = useRef(null)
+  const activeRef = useRef(active)
+  const playRequestRef = useRef(false)
+  const trackedIdsRef = useRef(trackedPosterIds)
+  const timersRef = useRef({ stable: null, sequence: null, grace: null, blackFlash: null })
+  const lossSettledRef = useRef(false)
+  const cycleTriggeredRef = useRef(false)
+  const sequenceCompleteRef = useRef(false)
+  const audioHasPlayedRef = useRef(false)
+  const playbackAttemptedRef = useRef(false)
+  const userPausedRef = useRef(false)
+
+  trackedIdsRef.current = trackedPosterIds
+  playbackRef.current = playback
+
+  const clearTimer = key => {
+    const timer = timersRef.current[key]
+    if (timer !== null) window.clearTimeout(timer)
+    timersRef.current[key] = null
+  }
+
+  const clearAllTimers = () => {
+    Object.keys(timersRef.current).forEach(key => clearTimer(key))
+  }
+
+  const startAudio = (fromUserGesture = false) => {
+    const audio = audioRef.current
+    if (!audio || playRequestRef.current || (!fromUserGesture && playbackAttemptedRef.current && !audioHasPlayedRef.current && playbackRef.current === 'blocked')) return
+    playbackAttemptedRef.current = true
+    playRequestRef.current = true
+    setPlayback('loading')
+    audio.play().catch(error => {
+      playRequestRef.current = false
+      if (!activeRef.current || error?.name === 'AbortError') return
+      const nextState = error?.name === 'NotAllowedError' ? 'blocked' : 'error'
+      console.info(`[Blue Night AR] Little Jazz playback could not start (${nextState}).`, error)
+      setPlayback(nextState)
+    })
+  }
+
+  const revealSongInfoThenStart = () => {
+    setSongInfoVisible(true)
+    if (playbackRef.current === 'blocked' || playbackRef.current === 'error') {
+      setPhase('spotlight')
+      return
+    }
+    setPhase('information')
+    if (timersRef.current.sequence !== null) return
+    timersRef.current.sequence = window.setTimeout(() => {
+      timersRef.current.sequence = null
+      if (!hasAllSecretTrackPosters(trackedIdsRef.current)) {
+        setPhase('idle')
+        return
+      }
+      setPhase('spotlight')
+      startAudio()
+    }, 180)
+  }
+
+  useEffect(() => {
+    if (!active) return undefined
+
+    clearAllTimers()
+    activeRef.current = true
+    playRequestRef.current = false
+    cycleTriggeredRef.current = false
+    sequenceCompleteRef.current = false
+    audioHasPlayedRef.current = false
+    playbackAttemptedRef.current = false
+    userPausedRef.current = false
+    lossSettledRef.current = false
+    onForcePosterMuteChange(false)
+    setPhase('idle')
+    setBlackFlash(false)
+    setSongInfoVisible(false)
+    setPlayback('idle')
+
+    const audio = new Audio()
+    audio.preload = 'none'
+    audio.src = '/audio/little-jazz-ella-fitzgerald.mp3'
+    audio.loop = false
+    audioRef.current = audio
+
+    const onPlaying = () => {
+      playRequestRef.current = false
+      audioHasPlayedRef.current = true
+      setPlayback('playing')
+    }
+    const onEnded = () => {
+      playRequestRef.current = false
+      setPlayback('ended')
+      setPhase('idle')
+    }
+    const onError = () => setPlayback('error')
+
+    audio.addEventListener('playing', onPlaying)
+    audio.addEventListener('ended', onEnded)
+    audio.addEventListener('error', onError)
+
+    return () => {
+      clearAllTimers()
+      activeRef.current = false
+      playRequestRef.current = false
+      audio.pause()
+      audio.currentTime = 0
+      audio.removeAttribute('src')
+      audio.load()
+      audio.removeEventListener('playing', onPlaying)
+      audio.removeEventListener('ended', onEnded)
+      audio.removeEventListener('error', onError)
+      if (audioRef.current === audio) audioRef.current = null
+      cycleTriggeredRef.current = false
+    }
+  }, [active])
+
+  useEffect(() => {
+    if (!active) return
+
+    const allThreeTracked = hasAllSecretTrackPosters(trackedPosterIds)
+    if (allThreeTracked) {
+      clearTimer('grace')
+      lossSettledRef.current = false
+
+      if (!cycleTriggeredRef.current) {
+        if (timersRef.current.stable !== null) return
+        timersRef.current.stable = window.setTimeout(() => {
+          timersRef.current.stable = null
+          if (!shouldUnlockSecretTrack(trackedIdsRef.current, cycleTriggeredRef.current)) return
+          cycleTriggeredRef.current = true
+          onForcePosterMuteChange(true)
+          setBlackFlash(true)
+          timersRef.current.blackFlash = window.setTimeout(() => {
+            timersRef.current.blackFlash = null
+            setBlackFlash(false)
+          }, 1300)
+          console.info('[Blue Night AR] Secret Track unlocked for all three distinct targets.', {
+            timestamp: new Date().toISOString(),
+            targetIds: [...trackedIdsRef.current],
+          })
+          setPhase('unlock')
+          timersRef.current.sequence = window.setTimeout(() => {
+            timersRef.current.sequence = null
+            sequenceCompleteRef.current = true
+            if (hasAllSecretTrackPosters(trackedIdsRef.current)) revealSongInfoThenStart()
+            else setPhase('idle')
+          }, 1300)
+        }, 800)
+        return
+      }
+
+      if (sequenceCompleteRef.current && !audioHasPlayedRef.current) {
+        if (playbackAttemptedRef.current) setPhase('spotlight')
+        else revealSongInfoThenStart()
+      } else if (audioHasPlayedRef.current && audioRef.current?.paused && !userPausedRef.current && playback !== 'ended') {
+        setPhase('spotlight')
+        startAudio()
+      }
+      return
+    }
+
+    clearTimer('stable')
+    if (!cycleTriggeredRef.current || timersRef.current.grace !== null || (lossSettledRef.current && trackedPosterIds.length > 0)) return
+
+    timersRef.current.grace = window.setTimeout(() => {
+      timersRef.current.grace = null
+      if (hasAllSecretTrackPosters(trackedIdsRef.current)) return
+
+      lossSettledRef.current = true
+      audioRef.current?.pause()
+      onForcePosterMuteChange(false)
+      setPhase('idle')
+
+      if (trackedIdsRef.current.length === 0) {
+        clearTimer('sequence')
+        cycleTriggeredRef.current = false
+        sequenceCompleteRef.current = false
+        lossSettledRef.current = false
+        audioHasPlayedRef.current = false
+        playbackAttemptedRef.current = false
+        userPausedRef.current = false
+        if (audioRef.current) audioRef.current.currentTime = 0
+        setBlackFlash(false)
+        setSongInfoVisible(false)
+        setPlayback('idle')
+      } else if (audioHasPlayedRef.current) {
+        setPlayback('paused')
+      }
+    }, 1600)
+  }, [active, trackedPosterIds, playback])
+
+  const togglePlayback = () => {
+    const audio = audioRef.current
+    if (!audio) return
+    if (playRequestRef.current || playbackRef.current === 'ended') return
+    if (!audio.paused) {
+      userPausedRef.current = true
+      audio.pause()
+      setPlayback('paused')
+      return
+    }
+    userPausedRef.current = false
+    startAudio(true)
+  }
+
+  return <>
+    {blackFlash && <div className="secret-track-black-flash" aria-hidden="true" />}
+    {phase === 'unlock' && <div className="secret-track-unlock" role="status">SECRET TRACK UNLOCKED.</div>}
+    {songInfoVisible && <aside className="secret-track-now-playing" aria-label="Now playing: Ella Fitzgerald, Little Jazz">
+      <strong>Ella Fitzgerald</strong>
+      <em>Little Jazz</em>
+    </aside>}
+    {phase === 'spotlight' && <aside className="secret-track-spotlight" aria-label="Ella Fitzgerald artist introduction">
+      <div className="secret-track-heading">
+        <div>
+          <span className="secret-track-kicker"><i /> SECRET TRACK</span>
+          <h2>ELLA FITZGERALD</h2>
+        </div>
+        <button className="secret-track-control" type="button" onClick={togglePlayback} disabled={playback === 'loading' || playback === 'ended'}>
+          {playback === 'playing' ? 'PAUSE' : playback === 'loading' ? 'LOADING' : playback === 'blocked' ? 'TAP TO PLAY' : playback === 'error' ? 'RETRY AUDIO' : playback === 'ended' ? 'TRACK ENDED' : 'PLAY LITTLE JAZZ'}
+        </button>
+      </div>
+      <p className="secret-track-subtitle">爵士樂壇的「歌壇第一夫人」</p>
+      <div className="secret-track-marquee" aria-label="Ella Fitzgerald 是二十世紀最具影響力的爵士歌手之一。她以清澈而富有表現力的嗓音、靈活的節奏感，以及精湛的擬聲即興演唱聞名。她將人聲化為如樂器般自由的表現媒介，拓展了爵士演唱的可能性，並在爵士樂史上留下深遠的影響。">
+        <div className="secret-track-marquee-track" aria-hidden="true">
+          <span>「Ella Fitzgerald 是二十世紀最具影響力的爵士歌手之一。她以清澈而富有表現力的嗓音、靈活的節奏感，以及精湛的擬聲即興演唱聞名。她將人聲化為如樂器般自由的表現媒介，拓展了爵士演唱的可能性，並在爵士樂史上留下深遠的影響。」</span>
+          <span>「Ella Fitzgerald 是二十世紀最具影響力的爵士歌手之一。她以清澈而富有表現力的嗓音、靈活的節奏感，以及精湛的擬聲即興演唱聞名。她將人聲化為如樂器般自由的表現媒介，拓展了爵士演唱的可能性，並在爵士樂史上留下深遠的影響。」</span>
+        </div>
+      </div>
+    </aside>}
+  </>
+}
+
 function ArPosterPage() {
   const [scannerState, setScannerState] = useState('intro')
   const [cameraMessage, setCameraMessage] = useState('')
-  const [targetDetected, setTargetDetected] = useState(false)
+  const [trackedPosterIds, setTrackedPosterIds] = useState([])
+  const [forceVideoMute, setForceVideoMute] = useState(false)
 
   const startScanning = () => {
     if (scannerState === 'requesting') return
@@ -272,20 +621,33 @@ function ArPosterPage() {
   }
 
   const stopScanning = () => {
-    setTargetDetected(false)
+    setTrackedPosterIds([])
+    setForceVideoMute(false)
     setScannerState('intro')
   }
 
   const isTracking = scannerState === 'requesting' || scannerState === 'camera'
+  const handleTrackedTargetsChange = ids => setTrackedPosterIds([...new Set(ids)])
+  const trackedPosterNames = posterTargets
+    .filter(poster => trackedPosterIds.includes(poster.id))
+    .map(poster => poster.label)
+    .join(' · ')
 
   return <>
   {isTracking && <main className="camera-screen">
     <PosterRecognitionLayer
       active={isTracking}
       onReady={() => setScannerState('camera')}
-      onTargetChange={setTargetDetected}
-      onError={message => { setCameraMessage(message); setScannerState('error') }}
+        onTargetsChange={handleTrackedTargetsChange}
+        onError={message => { setCameraMessage(message); setForceVideoMute(false); setScannerState('error') }}
+        trackedPosterIds={trackedPosterIds}
+        forceVideoMute={forceVideoMute}
     />
+      <SecretTrackExperience
+        active={isTracking}
+        trackedPosterIds={trackedPosterIds}
+        onForcePosterMuteChange={setForceVideoMute}
+      />
     <header className="camera-topline">
       <a className="camera-exit" href="/ar-poster" onClick={event => { event.preventDefault(); stopScanning() }}>← BACK</a>
       <span>AR POSTER <i>·</i> LIVE CAMERA</span>
@@ -299,7 +661,8 @@ function ArPosterPage() {
       <span className="scan-center"><i /></span>
     </div>
     <footer className="camera-bottomline">
-      <span>{targetDetected ? 'GUITAR / TRACKED' : 'SCANNING / GUITAR'}</span><i /><span>{targetDetected ? 'AR VIDEO / PLAYING' : 'IMAGE TARGET / 01'}</span>
+      <span>{trackedPosterNames || 'SCANNING / 03 TARGETS'}</span><i />
+      <span>{trackedPosterIds.length === posterTargets.length ? 'ALL VIDEOS / MUTED' : trackedPosterIds.length ? 'ORIGINAL AUDIO / ON' : 'IMAGE TARGETS / 01—03'}</span>
     </footer>
   </main>}
 
