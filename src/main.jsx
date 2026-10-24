@@ -694,6 +694,129 @@ function ArPosterPage() {
   </>
 }
 
+const ResilientStandbyVideo = React.forwardRef(function ResilientStandbyVideo({ onLoadedMetadata, onTimeUpdate }, forwardedRef) {
+  const localVideoRef = useRef(null)
+  const [hasDecodedFrame, setHasDecodedFrame] = useState(false)
+
+  useEffect(() => {
+    const video = localVideoRef.current
+    if (!video) return undefined
+
+    let disposed = false
+    let retryCount = 0
+    let retryTimer = 0
+    let playPending = false
+    let lastPlayFailed = false
+    const maxRetries = 2
+
+    const markFrameReady = () => {
+      if (!disposed && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) setHasDecodedFrame(true)
+    }
+
+    const attemptPlay = () => {
+      if (disposed || document.hidden || (lastPlayFailed && retryCount >= maxRetries) || playPending) return
+      video.muted = true
+      video.defaultMuted = true
+      video.playsInline = true
+
+      try {
+        const playPromise = video.play()
+        if (!playPromise || typeof playPromise.then !== 'function') return
+        playPending = true
+        playPromise.then(() => {
+          playPending = false
+          lastPlayFailed = false
+          markFrameReady()
+        }).catch(() => {
+          playPending = false
+          lastPlayFailed = true
+          scheduleRetry()
+        })
+      } catch {
+        lastPlayFailed = true
+        scheduleRetry()
+      }
+    }
+
+    const scheduleRetry = () => {
+      if (disposed || retryTimer || retryCount >= maxRetries) return
+      const delay = retryCount === 0 ? 400 : 1200
+      retryTimer = window.setTimeout(() => {
+        retryTimer = 0
+        if (disposed) return
+        if (document.hidden) return
+        retryCount += 1
+        lastPlayFailed = false
+        try {
+          video.load()
+          if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) attemptPlay()
+        } catch {
+          lastPlayFailed = true
+          scheduleRetry()
+        }
+      }, delay)
+    }
+
+    const handleError = () => {
+      if (disposed) return
+      setHasDecodedFrame(false)
+      lastPlayFailed = true
+      scheduleRetry()
+    }
+    const handleCanPlay = () => {
+      markFrameReady()
+      attemptPlay()
+    }
+    const handlePlaying = () => {
+      playPending = false
+      markFrameReady()
+    }
+    const handleVisibility = () => {
+      if (!document.hidden && video.paused) attemptPlay()
+    }
+
+    video.addEventListener('loadeddata', markFrameReady)
+    video.addEventListener('canplay', handleCanPlay)
+    video.addEventListener('playing', handlePlaying)
+    video.addEventListener('error', handleError)
+    document.addEventListener('visibilitychange', handleVisibility)
+    markFrameReady()
+    attemptPlay()
+
+    return () => {
+      disposed = true
+      if (retryTimer) window.clearTimeout(retryTimer)
+      video.removeEventListener('loadeddata', markFrameReady)
+      video.removeEventListener('canplay', handleCanPlay)
+      video.removeEventListener('playing', handlePlaying)
+      video.removeEventListener('error', handleError)
+      document.removeEventListener('visibilitychange', handleVisibility)
+      video.pause()
+    }
+  }, [])
+
+  const assignRef = video => {
+    localVideoRef.current = video
+    if (typeof forwardedRef === 'function') forwardedRef(video)
+    else if (forwardedRef) forwardedRef.current = video
+  }
+
+  return <video
+    ref={assignRef}
+    className="standby-video"
+    src="/blue-night-standby.mp4"
+    autoPlay
+    muted
+    loop
+    playsInline
+    preload="auto"
+    aria-hidden="true"
+    style={{ opacity: hasDecodedFrame ? 1 : 0, transition: 'opacity .25s ease' }}
+    onLoadedMetadata={onLoadedMetadata}
+    onTimeUpdate={onTimeUpdate}
+  />
+})
+
 function App() {
   if (window.location.pathname.replace(/\/$/, '') === '/ar-poster') return <ArPosterPage />
   const [phase, setPhase] = useState(() => {
@@ -772,17 +895,6 @@ function App() {
   }, [phase])
 
   useEffect(() => {
-    const video = standbyVideoRef.current
-    if (!standby || !video) return undefined
-    video.currentTime = 0
-    video.play().catch(() => {})
-    return () => {
-      video.pause()
-      video.currentTime = 0
-    }
-  }, [standby])
-
-  useEffect(() => {
     if (!standby) return undefined
     const rootOverflow = document.documentElement.style.overflow
     const bodyOverflow = document.body.style.overflow
@@ -826,16 +938,8 @@ function App() {
         if (event.target === event.currentTarget && event.animationName === 'iris-close') setPhase('portal')
       }}
     >
-      <video
+      <ResilientStandbyVideo
         ref={videoRef}
-        className="standby-video"
-        src="/blue-night-standby.mp4"
-        autoPlay
-        muted
-        loop
-        playsInline
-        preload="auto"
-        aria-hidden="true"
         onLoadedMetadata={updatePrompt}
         onTimeUpdate={updatePrompt}
       />
@@ -856,7 +960,7 @@ function App() {
         }
       }}
     >
-      <video ref={standbyVideoRef} className="standby-video" src="/blue-night-standby.mp4" autoPlay muted loop playsInline preload="auto" aria-hidden="true" />
+      <ResilientStandbyVideo ref={standbyVideoRef} />
       <span className="idle-prompt" aria-hidden="true"><i />TAP TO ENTER</span>
     </button>}
   </div>
