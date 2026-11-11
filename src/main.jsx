@@ -46,7 +46,7 @@ function PortalHome({ inactive, onManualStandby }) {
 
     <section className="portal" aria-labelledby="portal-title">
       <div className="portal-heading">
-        <span className="system-label"><i /> MAIN EXPERIENCE <b>00 — 01</b></span>
+        <span className="system-label"><i /><b>00 — 01</b></span>
         <h1 id="portal-title"><span>BLUE</span><em>NIGHT</em></h1>
         <p>One night. Three ways in.</p>
       </div>
@@ -55,7 +55,6 @@ function PortalHome({ inactive, onManualStandby }) {
         {entrances.map(item => <Entrance item={item} key={item.id} />)}
       </nav>
 
-      <div className="portal-instruction"><span>THREE DIGITAL EXPERIENCES</span><i aria-hidden="true">↓</i></div>
     </section>
 
     <footer className="footer">

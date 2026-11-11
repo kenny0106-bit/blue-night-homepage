@@ -99,8 +99,6 @@ a { color: inherit; text-decoration: none; }
 .is-live:hover::after,.is-live:focus-visible::after { transform: scaleX(1); }
 .is-live:focus-visible { outline: 1px solid var(--gold); outline-offset: 8px; }
 
-.portal-instruction { position: relative; align-self: flex-end; display: flex; align-items: center; gap: 11px; margin: -3px 5% 0 0; color: #878478; font-size: 8px; letter-spacing: .14em; }
-.portal-instruction i { color: var(--gold); font: normal 16px 'Barlow Condensed',sans-serif; animation: nudge 2.4s ease-in-out infinite; }
 .portal-side-note { position: absolute; right: 1px; bottom: 43%; color: #898679; font-size: 7px; letter-spacing: .15em; writing-mode: vertical-rl; }
 .footer { z-index: 2; height: 51px; flex: none; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--rule); color: #9d998b; font-size: 7px; letter-spacing: .12em; }
 .footer-signal { display: flex; align-items: center; gap: 9px; }
@@ -108,7 +106,6 @@ a { color: inherit; text-decoration: none; }
 
 @keyframes settle-in { from { opacity: 0; translate: 0 -8px; } to { opacity: 1; translate: 0 0; } }
 @keyframes title-arrive { from { opacity: 0; translate: -16px 0; } to { opacity: 1; translate: 0 0; } }
-@keyframes nudge { 0%,100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
 @keyframes drift { to { transform: translate3d(.4%,-.3%,0); } }
 @keyframes prompt-glow { 0%,100% { opacity: .58; box-shadow: 0 0 5px #e5bd3c65; } 50% { opacity: 1; box-shadow: 0 0 13px #e5bd3cbb; } }
 @keyframes iris-close { 0% { clip-path: circle(150% at 50% 50%); filter: brightness(1) saturate(1); opacity: 1; } 72% { clip-path: circle(44% at 50% 50%); filter: brightness(1.2) saturate(1.2); opacity: 1; } 100% { clip-path: circle(0% at 50% 50%); filter: brightness(1.45) saturate(1.25); opacity: 0; } }
@@ -138,7 +135,6 @@ a { color: inherit; text-decoration: none; }
   .entrance-03 .entrance-title { font-size: clamp(40px,10vw,53px); }
   .entrance-index { gap: 9px; font-size: 7px; }
   .entrance-state { font-size: 6px; gap: 6px; }
-  .portal-instruction { align-self: flex-start; margin: 39px 0 0 11%; gap: 8px; font-size: 7px; }
   .portal::before { top: 22%; right: -84%; width: min(155vw,760px); opacity: .35; }
   .portal::after { bottom: 3%; left: -52%; width: min(82vw,350px); opacity: .13; }
   .footer { height: 46px; font-size: 6px; letter-spacing: .07em; }
