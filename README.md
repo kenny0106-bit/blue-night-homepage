@@ -1,44 +1,33 @@
 # Blue Night Homepage
 
-Standalone Vite + React portal for the Blue Night digital experiences. This is an early test version intended for desktop and exhibition-tablet testing.
+Blue Night’s main digital portal, with the AR POSTER experience, the external THE SOUND site, and the interactive TICKET artwork exhibition. This repository is the standalone React/Vite project; the existing THE SOUND/NFC site remains a separate project.
 
-## Requirements
+## Local setup
 
-- Node.js compatible with Vite 8
-- pnpm (the repository includes `pnpm-lock.yaml`)
-
-## Local development
+Requirements: Node.js compatible with Vite 8 and pnpm.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Create a production build with `pnpm build`, then optionally preview it with `pnpm preview`.
+Run `pnpm build` for a production build or `pnpm preview` to serve the built site locally. There are no required environment variables.
 
-## Routes and destinations
+## Pages and destinations
 
-- `/` — opening animation and main portal
-- `/ar-poster` — AR poster introduction and camera-scanning preview
-- NFC — `https://blue-night-one.vercel.app/`
-- TICKETS — currently a coming-soon placeholder
+- `/` — Blue Night opening scene, main portal, and website standby mode.
+- `/ar-poster` — AR poster introduction and live camera scanner.
+- `/ticket` — four-edition ticket artwork exhibition with full-ticket 3D flip and tear/reassemble interactions. Ticket reservations are intentionally unavailable placeholders.
+- THE SOUND — external link to [blue-night-one.vercel.app](https://blue-night-one.vercel.app/); its source project is not part of this repository.
 
-The entrance data is in `src/main.jsx` in the `entrances` array. Replace the placeholder `href` for TICKETS when its destination is ready. Vercel is configured to serve the SPA entry point on direct route visits, including `/ar-poster`.
+Vercel’s `vercel.json` rewrites direct route visits and refreshes to the SPA entry point. For implementation details, assets, project status, and handoff notes, see [PROJECT_HANDOFF.md](PROJECT_HANDOFF.md).
 
-## Opening and standby video
+## AR poster assets
 
-The opening and website standby use `public/blue-night-standby.mp4`. The video is muted for autoplay and retains its original aspect ratio. It plays once as the opening scene and is reused by the website-level standby overlay.
+The scanner requests the rear camera only after the visitor chooses **START SCANNING**. The MindAR database is `public/ar/blue-night-posters.mind`; its target order must match `posterTargets` in `src/main.jsx`: Guitar, Microphone, French Horn. Poster target images are in `public/ar/poster-targets/`, and the matching videos are in `public/ar/poster-videos/`.
 
-The portal enters standby after 15 seconds without input anywhere in the page. The global activity listeners cover pointer/mouse, touch, scroll/wheel, keyboard, text input, and clicks. The small **STANDBY** masthead control enters the same standby state immediately. Change `IDLE_TIMEOUT_MS` near the top of `src/main.jsx` to adjust the delay.
+One or two tracked poster videos use their original audio and play once; when all three targets are tracked, the videos loop muted and the Little Jazz secret-track experience can play. Browser audio policies may require a user gesture. Camera access requires HTTPS after deployment (`localhost` is suitable for local development).
 
-## AR poster tracking
+## Deploying
 
-The `/ar-poster` intro requests the rear-facing camera only after **START SCANNING** is pressed. MindAR tracks up to three independent image targets from `public/ar/blue-night-posters.mind`, in this order: Guitar, Microphone, French Horn. Their original poster images are kept in `public/ar/poster-targets/`; their videos are in `public/ar/poster-videos/`.
-
-Each tracked poster has its own Three.js video plane. One or two tracked posters play their videos with embedded audio. When all three are tracked, all three continue playing while their videos are muted; losing a target stops only that target and restores audio for any remaining one or two. The target order in `posterTargets` in `src/main.jsx` must match the compiled `.mind` target order.
-
-Camera access requires HTTPS in deployed environments (`localhost` is permitted for local development). To replace a poster, place the new image and video in the corresponding folders and recompile `blue-night-posters.mind` with the same target order. No environment variables are required.
-
-## GitHub and Vercel
-
-This directory is intended to be its own GitHub repository. When importing it into Vercel, use the Vite framework preset (normally auto-detected), leave **Root Directory** at the repository root, use `pnpm build` as the build command, and `dist` as the output directory. The included `vercel.json` preserves SPA routing on direct visits and refreshes.
+The project uses the existing `kenny0106-bit/blue-night-homepage` repository and Vercel project. Use the repository root as Vercel’s Root Directory, `pnpm build` as the build command, and `dist` as the output directory. Pushing to `main` should trigger the connected production deployment. The project does not need environment variables.

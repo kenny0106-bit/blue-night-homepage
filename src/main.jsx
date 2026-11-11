@@ -4,6 +4,7 @@ import { updatePosterAudioMode } from './poster-audio-mode.js'
 import { updatePosterLoopMode } from './poster-video-mode.js'
 import { hasCoincidentPosterPose } from './poster-pose.js'
 import { hasAllSecretTrackPosters, shouldUnlockSecretTrack } from './secret-track-logic.js'
+import TicketPage from './TicketPage.jsx'
 import './styles.css'
 
 // Adjust this one value to change the homepage idle delay.
@@ -13,7 +14,7 @@ const IDLE_TIMEOUT_MS = 15_000
 const entrances = [
   { id: '01', name: 'AR POSTER', detail: 'SCAN', href: '/ar-poster', state: 'SCANNER PREVIEW' },
   { id: '02', name: 'THE SOUND', detail: 'TAP IN', href: 'https://blue-night-one.vercel.app/', state: 'AVAILABLE' },
-  { id: '03', name: 'TICKET', detail: 'ENTRY', href: '', state: 'COMING SOON' },
+  { id: '03', name: 'TICKET', detail: 'ENTRY', href: '/ticket', state: 'AVAILABLE' },
 ]
 
 function BrandMark() {
@@ -30,7 +31,7 @@ function Entrance({ item }) {
   </>
 
   return item.href
-    ? <a className={`entrance entrance-${item.id} is-live`} href={item.href} aria-label={item.id === '02' ? 'NFC, available now. Open the Blue Night NFC experience' : 'AR Poster, open the camera scanning preview'}>{content}</a>
+    ? <a className={`entrance entrance-${item.id} is-live`} href={item.href} aria-label={item.id === '02' ? 'THE SOUND, open the Blue Night sound experience' : item.id === '03' ? 'TICKET, open the Blue Night ticket exhibition' : 'AR Poster, open the camera scanning preview'}>{content}</a>
     : <div className={`entrance entrance-${item.id} is-pending`} aria-label={`${item.name}, coming soon`}>{content}</div>
 }
 
@@ -819,6 +820,7 @@ const ResilientStandbyVideo = React.forwardRef(function ResilientStandbyVideo({ 
 
 function App() {
   if (window.location.pathname.replace(/\/$/, '') === '/ar-poster') return <ArPosterPage />
+  if (window.location.pathname.replace(/\/$/, '') === '/ticket') return <TicketPage />
   const [phase, setPhase] = useState(() => {
     const returningFromAr = window.sessionStorage.getItem('blue-night-return-to-portal') === '1'
     window.sessionStorage.removeItem('blue-night-return-to-portal')
