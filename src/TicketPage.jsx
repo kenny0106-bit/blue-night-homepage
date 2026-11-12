@@ -54,6 +54,20 @@ function TicketFacePair({ edition, className }) {
   </span>
 }
 
+function getZoomStyle(point) {
+  if (!point) return undefined
+  return {
+    '--zoom-x': `${point.x * 100}%`,
+    '--zoom-y': `${point.y * 100}%`,
+    '--zoom-left': `${point.x * 100}%`,
+    '--zoom-top': `${point.y * 100}%`,
+    '--zoom-x-px': `${point.x * point.width}px`,
+    '--zoom-y-px': `${point.y * point.height}px`,
+    '--ticket-card-width': `${point.width}px`,
+    '--ticket-card-height': `${point.height}px`,
+  }
+}
+
 const STITCH_REFERENCE_WIDTH = 1892
 const STITCH_STUB_ASPECT = 945 / 602
 const stitchPieces = [
@@ -63,14 +77,20 @@ const stitchPieces = [
   { id: 'funk', title: 'FUNK', src: '/tickets/stubs/transparent/funk.png', x: 952, y: 711, width: 699, height: 462, rotation: 0, delay: 360 },
 ]
 
-function TicketStitchExperience({ origin, onClose }) {
+function TicketStitchExperience({ origin, onClose, zoomActive, zoomPoint, onZoomToggle, onZoomStart, onZoomMove, onZoomEnd }) {
   const canvasRef = useRef(null)
   const loadedAssets = useRef(new Set())
   const isMounted = useRef(true)
+  const onCloseRef = useRef(onClose)
+  const finishAssemblyRef = useRef(() => {})
   const [loadedCount, setLoadedCount] = useState(0)
   const [canvas, setCanvas] = useState(null)
   const [isMoving, setIsMoving] = useState(false)
+  const [arePiecesHidden, setArePiecesHidden] = useState(false)
   const [isAssembled, setIsAssembled] = useState(false)
+  const [activeFilter, setActiveFilter] = useState(null)
+
+  onCloseRef.current = onClose
 
   const assetReady = key => {
     if (!isMounted.current || loadedAssets.current.has(key)) return
@@ -81,6 +101,18 @@ function TicketStitchExperience({ origin, onClose }) {
   useEffect(() => {
     if (loadedCount < stitchPieces.length + 1 || !canvasRef.current) return undefined
     let frameTwo
+    let revealTimer
+    let finishStarted = false
+
+    const finish = () => {
+      if (finishStarted) return
+      finishStarted = true
+      setArePiecesHidden(true)
+      revealTimer = window.setTimeout(() => {
+        if (isMounted.current) setIsAssembled(true)
+      }, 340)
+    }
+    finishAssemblyRef.current = finish
 
     const updateCanvas = () => {
       const rect = canvasRef.current?.getBoundingClientRect()
@@ -91,20 +123,22 @@ function TicketStitchExperience({ origin, onClose }) {
     const frameOne = window.requestAnimationFrame(() => {
       frameTwo = window.requestAnimationFrame(() => setIsMoving(true))
     })
-    const settleTimer = window.setTimeout(() => setIsAssembled(true), 2200)
+    const settleTimer = window.setTimeout(finish, 2200)
     const onKeyDown = event => {
-      if (event.key === 'Escape') onClose()
+      if (event.key === 'Escape') onCloseRef.current()
     }
     window.addEventListener('keydown', onKeyDown)
 
     return () => {
       window.removeEventListener('resize', updateCanvas)
       window.removeEventListener('keydown', onKeyDown)
+      finishAssemblyRef.current = () => {}
       window.cancelAnimationFrame(frameOne)
       if (frameTwo) window.cancelAnimationFrame(frameTwo)
       window.clearTimeout(settleTimer)
+      window.clearTimeout(revealTimer)
     }
-  }, [loadedCount, onClose])
+  }, [loadedCount])
 
   useEffect(() => {
     isMounted.current = true
@@ -118,26 +152,28 @@ function TicketStitchExperience({ origin, onClose }) {
     const startHeight = startWidth / STITCH_STUB_ASPECT
     const startX = origin.left - canvas.left
     const startY = origin.top - canvas.top
-    const targetWidth = (piece.rotation ? piece.height : piece.width) * scale
-    const targetHeight = targetWidth / STITCH_STUB_ASPECT
-    const visualCenterX = (piece.x + piece.width / 2) * scale
-    const visualCenterY = (piece.y + piece.height / 2) * scale
-    const targetX = visualCenterX - targetWidth / 2
-    const targetY = visualCenterY - targetHeight / 2
-    const zoom = targetWidth / startWidth
+    const targetWidthBeforeRotation = (piece.rotation ? piece.height : piece.width) * scale
+    const targetCenterX = (piece.x + piece.width / 2) * scale
+    const targetCenterY = (piece.y + piece.height / 2) * scale
+    const startCenterX = startX + startWidth / 2
+    const startCenterY = startY + startHeight / 2
+    const zoom = targetWidthBeforeRotation / startWidth
 
     return {
       left: `${startX}px`,
       top: `${startY}px`,
       width: `${startWidth}px`,
       height: `${startHeight}px`,
-      '--piece-transform': `translate3d(${targetX - startX}px,${targetY - startY}px,0) scale(${zoom}) rotate(${piece.rotation}deg)`,
+      // Center the transformed artwork on its reference bounds. Scaling and
+      // rotation happen around the piece center, so using top-left deltas
+      // would shift the portrait-rotated pieces and leave visible seams.
+      '--piece-transform': `translate3d(${targetCenterX - startCenterX}px,${targetCenterY - startCenterY}px,0) scale(${zoom}) rotate(${piece.rotation}deg)`,
       '--piece-delay': `${piece.delay}ms`,
     }
   }
 
   const finishAssembly = event => {
-    if (event.target === event.currentTarget && event.propertyName === 'transform') setIsAssembled(true)
+    if (event.target === event.currentTarget && event.propertyName === 'transform') finishAssemblyRef.current()
   }
 
   return <div
@@ -147,9 +183,17 @@ function TicketStitchExperience({ origin, onClose }) {
     aria-label="Four Blue Night ticket stubs assembled artwork"
     onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}
   >
-    <div className="ticket-stitch-canvas" ref={canvasRef}>
+    <div
+      className={`ticket-stitch-canvas ${zoomActive ? 'is-zoom-active' : ''}`}
+      ref={canvasRef}
+      onPointerDown={event => onZoomStart(event, true)}
+      onPointerMove={event => onZoomMove(event, true)}
+      onPointerUp={onZoomEnd}
+      onPointerCancel={onZoomEnd}
+      onPointerLeave={event => { if (event.pointerType !== 'touch') onZoomEnd(event) }}
+    >
       {stitchPieces.map(piece => <div
-        className={`ticket-stitch-piece ${isMoving ? 'is-moving' : ''} ${isAssembled ? 'is-hidden' : ''}`}
+        className={`ticket-stitch-piece ${isMoving ? 'is-moving' : ''} ${arePiecesHidden ? 'is-hidden' : ''}`}
         key={piece.id}
         style={getPieceStyle(piece)}
         onTransitionEnd={piece.id === 'funk' ? finishAssembly : undefined}
@@ -164,7 +208,60 @@ function TicketStitchExperience({ origin, onClose }) {
         onLoad={() => assetReady('reference')}
         onError={() => assetReady('reference')}
       />
+      <img
+        className={`ticket-stitch-filter-layer ${activeFilter === 'red' ? 'is-active' : ''} ${activeFilter && activeFilter !== 'red' ? 'is-faded' : ''}`}
+        src="/tickets/filters/red.png"
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+      />
+      <img
+        className={`ticket-stitch-filter-layer ${activeFilter === 'green' ? 'is-active' : ''} ${activeFilter && activeFilter !== 'green' ? 'is-faded' : ''} ${activeFilter === 'red' ? 'is-red-mode-faded' : ''}`}
+        src="/tickets/filters/green.png"
+        alt=""
+        aria-hidden="true"
+        draggable="false"
+      />
+      <span
+        className={`ticket-zoom-layer ${zoomActive && zoomPoint && isAssembled ? 'is-active' : ''}`}
+        style={getZoomStyle(zoomPoint)}
+        aria-hidden="true"
+      >
+        <span className="ticket-zoom-window">
+          <span className="ticket-zoom-content ticket-stitch-zoom-content">
+            <img className="ticket-stitch-zoom-base" src="/tickets/stitch-reference.png" alt="" draggable="false" />
+            <img className={`ticket-stitch-zoom-filter ${activeFilter === 'red' ? 'is-active' : ''} ${activeFilter && activeFilter !== 'red' ? 'is-faded' : ''}`} src="/tickets/filters/red.png" alt="" draggable="false" />
+            <img className={`ticket-stitch-zoom-filter ${activeFilter === 'green' ? 'is-active' : ''} ${activeFilter && activeFilter !== 'green' ? 'is-faded' : ''} ${activeFilter === 'red' ? 'is-red-mode-faded' : ''}`} src="/tickets/filters/green.png" alt="" draggable="false" />
+          </span>
+        </span>
+      </span>
+      {isAssembled && <button
+        className={`ticket-zoom-toggle ${zoomActive ? 'is-active' : ''}`}
+        type="button"
+        aria-label={zoomActive ? 'Turn off detail magnifier' : 'Turn on detail magnifier'}
+        aria-pressed={zoomActive}
+        onPointerDown={event => event.stopPropagation()}
+        onClick={onZoomToggle}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.4" /><path d="m15.5 15.5 5 5" /></svg>
+        <span>{zoomActive ? 'ZOOM ON' : 'DETAIL ZOOM'}</span>
+      </button>}
     </div>
+    {isAssembled && <div className="ticket-filter-controls" role="group" aria-label="Reveal hidden artwork with color filters">
+      <span className="ticket-filter-label">FILTER</span>
+      <button
+        className={`ticket-filter-button ${activeFilter === 'red' ? 'is-selected' : ''}`}
+        type="button"
+        aria-pressed={activeFilter === 'red'}
+        onClick={() => setActiveFilter(current => current === 'red' ? null : 'red')}
+      >RED</button>
+      <button
+        className={`ticket-filter-button ${activeFilter === 'green' ? 'is-selected' : ''}`}
+        type="button"
+        aria-pressed={activeFilter === 'green'}
+        onClick={() => setActiveFilter(current => current === 'green' ? null : 'green')}
+      >GREEN</button>
+    </div>}
     <button className="ticket-stitch-close" type="button" onClick={onClose}>CLOSE <span aria-hidden="true">×</span></button>
     {!isMoving && <span className="ticket-stitch-loading" aria-live="polite">PREPARING THE FOUR FREQUENCIES</span>}
   </div>
@@ -179,6 +276,8 @@ export default function TicketPage() {
   const [zoomPoint, setZoomPoint] = useState(null)
   const [isFlipping, setIsFlipping] = useState(false)
   const [stitchOrigin, setStitchOrigin] = useState(null)
+  const tearAfterFront = useRef(false)
+  const activeTouchPointer = useRef(null)
   const edition = ticketEditions.find(item => item.id === editionId) || ticketEditions[0]
 
   useEffect(() => {
@@ -190,6 +289,7 @@ export default function TicketPage() {
 
   const chooseEdition = id => {
     if (id === editionId) return
+    tearAfterFront.current = false
     setEditionId(id)
     setIsBack(false)
     setIsTorn(false)
@@ -197,17 +297,31 @@ export default function TicketPage() {
     setIsFlipping(false)
     setZoomActive(false)
     setZoomPoint(null)
+    activeTouchPointer.current = null
   }
   const flipTicket = () => {
     if (isTearing || isFlipping) return
     setZoomActive(false)
     setZoomPoint(null)
+    activeTouchPointer.current = null
     setIsFlipping(true)
     setIsBack(value => !value)
   }
-  const trackZoom = event => {
-    if (event.pointerType !== 'mouse' || !zoomActive || isTorn || isFlipping) return
+  const startTicketTear = () => {
+    setZoomActive(false)
+    setZoomPoint(null)
+    activeTouchPointer.current = null
+    setIsTearing(true)
+    setIsTorn(true)
+  }
+  const updateZoomPoint = (event, rotated = isBack) => {
     const bounds = event.currentTarget.getBoundingClientRect()
+    const isInsideTicket = event.clientX >= bounds.left && event.clientX <= bounds.right
+      && event.clientY >= bounds.top && event.clientY <= bounds.bottom
+    if (!isInsideTicket) {
+      setZoomPoint(null)
+      return
+    }
     const screenX = (event.clientX - bounds.left) / bounds.width
     const screenY = (event.clientY - bounds.top) / bounds.height
     const width = event.currentTarget.offsetWidth
@@ -215,28 +329,77 @@ export default function TicketPage() {
     // The back ticket is rotated -90deg around its center. Convert the
     // pointer from the rotated bounding box back into the ticket's local
     // coordinates: local X is reversed screen Y, and local Y is screen X.
-    const localX = isBack ? 1 - screenY : screenX
-    const localY = isBack ? screenX : screenY
+    const localX = rotated ? 1 - screenY : screenX
+    const localY = rotated ? screenX : screenY
     const x = Math.max(0, Math.min(1, localX))
     const y = Math.max(0, Math.min(1, localY))
     setZoomPoint({ x, y, width, height })
   }
+  const trackZoom = (event, onStitchCanvas = false) => {
+    if (!zoomActive || isTearing || isFlipping || (isTorn && !onStitchCanvas) || (stitchOrigin && !onStitchCanvas)) return
+    if (event.pointerType === 'touch' && activeTouchPointer.current !== event.pointerId) return
+    updateZoomPoint(event, onStitchCanvas ? false : isBack)
+  }
+  const startZoomPointer = (event, onStitchCanvas = false) => {
+    if (!zoomActive || isTearing || isFlipping || (isTorn && !onStitchCanvas) || (stitchOrigin && !onStitchCanvas)) return
+    if (event.pointerType === 'touch') {
+      activeTouchPointer.current = event.pointerId
+      try { event.currentTarget.setPointerCapture(event.pointerId) } catch { /* Browser may already capture touch pointers. */ }
+      event.preventDefault()
+    }
+    updateZoomPoint(event, onStitchCanvas ? false : isBack)
+  }
+  const endZoomPointer = event => {
+    if (event.pointerType === 'touch' && activeTouchPointer.current === event.pointerId) {
+      activeTouchPointer.current = null
+      setZoomPoint(null)
+    } else if (event.type === 'pointercancel' || event.type === 'pointerleave') {
+      activeTouchPointer.current = null
+      setZoomPoint(null)
+    }
+  }
+  const toggleStitchZoom = () => {
+    setZoomActive(value => !value)
+    setZoomPoint(null)
+    activeTouchPointer.current = null
+  }
+  const closeStitch = () => {
+    setStitchOrigin(null)
+    setZoomActive(false)
+    setZoomPoint(null)
+    activeTouchPointer.current = null
+  }
   const handleTicketTransitionEnd = event => {
     if (event.target === event.currentTarget && event.propertyName === 'transform') {
+      if (tearAfterFront.current) {
+        if (isBack) {
+          setIsBack(false)
+          return
+        }
+        tearAfterFront.current = false
+        setIsFlipping(false)
+        startTicketTear()
+        return
+      }
       setIsFlipping(false)
     }
   }
   const handleTicketClick = event => {
-    if (!isBack && !isTorn && !isTearing && !isFlipping) {
+    if (zoomActive || isTearing || isFlipping || stitchOrigin) return
+    if (!isBack) {
       const bounds = event.currentTarget.getBoundingClientRect()
       const frontSeam = 1 - (((edition.front[2] - edition.front[0]) / (edition.front[3] - edition.front[1])) / STUB_ART_ASPECT)
       const pointerY = (event.clientY - bounds.top) / bounds.height
       if (pointerY >= frontSeam) {
+        if (!isTorn) return
+        const tearOffset = Number.parseFloat(getComputedStyle(event.currentTarget).getPropertyValue('--ticket-stub-tear-y')) || 0
+        if (pointerY < frontSeam + tearOffset / bounds.height) return
         setZoomActive(false)
         setZoomPoint(null)
+        activeTouchPointer.current = null
         setStitchOrigin({
           left: bounds.left,
-          top: bounds.top + frontSeam * bounds.height,
+          top: bounds.top + frontSeam * bounds.height + tearOffset,
           width: bounds.width,
           height: bounds.height * (1 - frontSeam),
         })
@@ -286,18 +449,24 @@ export default function TicketPage() {
           onClick={() => {
             setZoomActive(value => !value)
             setZoomPoint(null)
+            activeTouchPointer.current = null
           }}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.4" /><path d="m15.5 15.5 5 5" /></svg>
           <span>{zoomActive ? 'ZOOM ON' : 'DETAIL ZOOM'}</span>
         </button>
         <button
-          className={`ticket-composition ${isBack ? 'is-back' : ''} ${isTorn ? 'is-torn' : ''} ${isFlipping ? 'is-flipping' : ''}`}
+          className={`ticket-composition ${isBack ? 'is-back' : ''} ${isTorn ? 'is-torn' : ''} ${isTearing ? 'is-tearing' : ''} ${isFlipping ? 'is-flipping' : ''} ${stitchOrigin ? 'is-stitching' : ''} ${zoomActive ? 'is-zoom-active' : ''}`}
           style={{ ...ticketCropStyle(edition), cursor: zoomActive && !isFlipping && !isTorn ? 'zoom-in' : undefined }}
           type="button"
           onClick={handleTicketClick}
+          onPointerDown={startZoomPointer}
           onPointerMove={trackZoom}
-          onPointerLeave={() => setZoomPoint(null)}
+          onPointerUp={endZoomPointer}
+          onPointerCancel={endZoomPointer}
+          onPointerLeave={event => {
+            if (event.pointerType !== 'touch') setZoomPoint(null)
+          }}
           onTransitionEnd={handleTicketTransitionEnd}
           aria-label={`${edition.title} ticket. Currently showing ${isBack ? 'back' : 'front'}. Flip to ${isBack ? 'front' : 'back'}.`}
           aria-pressed={isBack}
@@ -306,16 +475,7 @@ export default function TicketPage() {
           <TicketFacePair edition={edition} className="ticket-full-flip" />
           <span
             className={`ticket-zoom-layer ${zoomActive && zoomPoint && !isTorn && !isFlipping ? 'is-active' : ''} ${isBack ? 'is-back' : ''}`}
-            style={zoomPoint ? {
-              '--zoom-x': `${zoomPoint.x * 100}%`,
-              '--zoom-y': `${zoomPoint.y * 100}%`,
-              '--zoom-left': `${zoomPoint.x * 100}%`,
-              '--zoom-top': `${zoomPoint.y * 100}%`,
-              '--zoom-x-px': `${zoomPoint.x * zoomPoint.width}px`,
-              '--zoom-y-px': `${zoomPoint.y * zoomPoint.height}px`,
-              '--ticket-card-width': `${zoomPoint.width}px`,
-              '--ticket-card-height': `${zoomPoint.height}px`,
-            } : undefined}
+            style={getZoomStyle(zoomPoint)}
             aria-hidden="true"
           >
             <span className="ticket-zoom-window">
@@ -362,22 +522,29 @@ export default function TicketPage() {
         <button
           className="ticket-tear-button"
           type="button"
+          disabled={isFlipping || isTearing || Boolean(stitchOrigin)}
           onClick={() => {
             if (isTorn) {
+              tearAfterFront.current = false
               setIsTorn(false)
               setIsBack(false)
               setIsTearing(false)
             } else {
               setZoomActive(false)
               setZoomPoint(null)
-              setIsBack(false)
-              setIsTearing(true)
-              setIsTorn(true)
+              activeTouchPointer.current = null
+              if (isBack) {
+                tearAfterFront.current = true
+                setIsFlipping(true)
+                setIsBack(false)
+              } else {
+                startTicketTear()
+              }
             }
           }}
           aria-pressed={isTorn}
         >
-          <span>{isTorn ? 'REASSEMBLE TICKET' : '探索票券'}</span>
+          <span>{isTorn ? '重新拼接票根' : '探索票券'}</span>
           <i aria-hidden="true">{isTorn ? '↶' : '↗'}</i>
         </button>
         <button className="ticket-reserve is-sold-out" type="button" disabled aria-label="Tickets sold out">
@@ -395,6 +562,15 @@ export default function TicketPage() {
     </section>
 
     <footer className="ticket-footer"><span>BLUE NIGHT / KAOHSIUNG</span><span>PRINTED MUSIC CULTURE</span><a href="/#portal">← RETURN TO MAIN EXPERIENCE</a></footer>
-    {stitchOrigin && <TicketStitchExperience origin={stitchOrigin} onClose={() => setStitchOrigin(null)} />}
+    {stitchOrigin && <TicketStitchExperience
+      origin={stitchOrigin}
+      onClose={closeStitch}
+      zoomActive={zoomActive}
+      zoomPoint={zoomPoint}
+      onZoomToggle={toggleStitchZoom}
+      onZoomStart={startZoomPointer}
+      onZoomMove={trackZoom}
+      onZoomEnd={endZoomPointer}
+    />}
   </main>
 }

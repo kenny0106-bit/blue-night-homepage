@@ -60,7 +60,6 @@ function PortalHome({ inactive, onManualStandby }) {
     <footer className="footer">
       <span>UNDERGROUND SOUND / TAIWAN</span>
       <span className="footer-signal"><i /> SYSTEM ONLINE</span>
-      <span>BN—001</span>
     </footer>
   </main>
 }
